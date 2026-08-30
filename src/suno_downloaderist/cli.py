@@ -147,7 +147,7 @@ async def _build_client(session_data) -> tuple:
 @click.version_option(version=__version__, prog_name=__app_name__)
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool) -> None:
-    """🎵 Suno Song Downloaderist — Download and preserve your Suno AI music library."""
+    """Suno Song Downloaderist -- Download and preserve your Suno AI music library."""
     setup_logging(verbose=verbose)
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
