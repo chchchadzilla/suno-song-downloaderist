@@ -157,15 +157,113 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 # ─── LOGIN ──────────────────────────────────────────────────────────────────
 
 @cli.command()
-def login() -> None:
+@click.option(
+    "--manual", is_flag=True, default=False,
+    help="Paste your session cookie manually instead of opening a browser.",
+)
+def login(manual: bool) -> None:
     """Open a browser window to log into Suno and save your session."""
+
+    if manual:
+        _do_manual_login()
+    else:
+        _do_browser_login()
+
+
+def _do_manual_login() -> None:
+    """Manual login: user pastes their __client cookie from DevTools."""
+    console.print(
+        Panel(
+            "[bold]Manual Login[/bold]\n\n"
+            "1. Open [link=https://suno.com]suno.com[/link] in your browser and make sure you're logged in.\n"
+            "2. Press [bold]F12[/bold] to open DevTools.\n"
+            "3. Click the [bold]Application[/bold] tab (Chrome) or [bold]Storage[/bold] tab (Firefox).\n"
+            "4. In the left sidebar, click [bold]Cookies[/bold] > [bold]https://suno.com[/bold].\n"
+            "5. Find the cookie named [bold yellow]__client[/bold yellow] and copy its [bold]Value[/bold].\n"
+            "6. Paste it below.",
+            title="Manual Authentication",
+            border_style="purple",
+        )
+    )
+
+    cookie_value = click.prompt(
+        "\nPaste your __client cookie value",
+        hide_input=False,
+    ).strip()
+
+    if not cookie_value:
+        console.print("[bold red]No cookie provided.[/bold red]")
+        raise click.Abort()
+
+    if len(cookie_value) < 50:
+        console.print("[bold red]That doesn't look right — the __client cookie is usually very long.[/bold red]")
+        raise click.Abort()
+
+    # Verify it works
+    async def _verify_and_save():
+        import httpx
+        from suno_downloaderist.auth.browser import SessionData
+        from suno_downloaderist.auth.session import SessionManager
+        import time
+
+        console.print("\n[dim]Verifying cookie...[/dim]")
+
+        url = "https://clerk.suno.com/v1/client"
+        headers = {"Cookie": f"__client={cookie_value}"}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers, timeout=10.0)
+
+        if response.status_code != 200:
+            console.print(f"[bold red]Clerk API returned {response.status_code}. Cookie might be invalid.[/bold red]")
+            raise click.Abort()
+
+        data = response.json()
+        response_data = data.get("response", data)
+        sessions = response_data.get("sessions", [])
+        active = [s for s in sessions if s.get("status") == "active"]
+
+        if not active and not response_data.get("last_active_session_id"):
+            console.print("[bold red]No active sessions found for this cookie. Are you logged in?[/bold red]")
+            raise click.Abort()
+
+        session_data = SessionData(
+            cookie=cookie_value,
+            session_id=None,
+            timestamp=time.time(),
+            user_agent="manual-login",
+        )
+
+        manager = SessionManager()
+        manager.save_session(session_data)
+
+        console.print(
+            f"\n[bold green]Login successful![/bold green]\n"
+            f"Session saved and encrypted locally.\n"
+            f"Session expires in 7 days. Run [bold]suno-dl login --manual[/bold] again to refresh."
+        )
+
+    try:
+        asyncio.run(_verify_and_save())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Login cancelled.[/yellow]")
+    except click.exceptions.Abort:
+        raise
+    except Exception as exc:
+        console.print(f"\n[bold red]Verification failed:[/bold red] {exc}")
+        raise click.Abort()
+
+
+def _do_browser_login() -> None:
+    """Browser login: Playwright opens Chrome for interactive login."""
     console.print(
         Panel(
             "[bold]Suno Login[/bold]\n\n"
             "A browser window will open to [link=https://suno.com]suno.com[/link].\n"
             "Log in with your account, and we'll capture the session automatically.\n"
-            "Your credentials are [bold green]never stored[/bold green] — only an encrypted session token.",
-            title="🔐 Authentication",
+            "Your credentials are [bold green]never stored[/bold green] — only an encrypted session token.\n\n"
+            "[dim]Tip: If this doesn't work, try:[/dim] [bold]suno-dl login --manual[/bold]",
+            title="Authentication",
             border_style="purple",
         )
     )
@@ -182,7 +280,7 @@ def login() -> None:
         manager.save_session(session_data)
 
         console.print(
-            f"\n[bold green]✅ Login successful![/bold green]\n"
+            f"\n[bold green]Login successful![/bold green]\n"
             f"Session saved and encrypted locally.\n"
             f"Session expires in 7 days. Run [bold]suno-dl login[/bold] again to refresh."
         )
@@ -193,6 +291,7 @@ def login() -> None:
         console.print("\n[yellow]Login cancelled.[/yellow]")
     except Exception as exc:
         console.print(f"\n[bold red]Login failed:[/bold red] {exc}")
+        console.print("[dim]Try [bold]suno-dl login --manual[/bold] instead.[/dim]")
         raise click.Abort()
 
 
