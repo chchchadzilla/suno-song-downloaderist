@@ -82,36 +82,58 @@ class BrowserAuthenticator:
                 if chrome_profile:
                     logger.info("Using your Chrome profile for login.")
                     try:
-                        # Launch with the user's real Chrome profile
                         context = await p.chromium.launch_persistent_context(
                             user_data_dir=chrome_profile,
                             headless=False,
                             channel="chrome",
                             args=["--profile-directory=Default"],
                         )
+                        logger.debug("Persistent context launched.")
                     except Exception as exc:
                         logger.warning(
-                            "Couldn't open your Chrome profile (is Chrome already running?). "
-                            "Opening a fresh Chrome window instead. Error: %s",
+                            "Couldn't open Chrome profile (is Chrome running?): %s",
                             exc,
                         )
                         context = None
 
-                # Fallback: fresh Chrome window (no profile)
+                # Fallback: fresh Chrome window
                 if context is None:
+                    logger.info("Opening a fresh Chrome window.")
                     browser = await p.chromium.launch(
                         headless=False,
                         channel="chrome",
                     )
                     context = await browser.new_context()
 
-                # For persistent context, use the page it already opened
+                # Get or create a page
+                logger.debug("Pages in context: %d", len(context.pages))
                 if context.pages:
                     page = context.pages[0]
+                    logger.debug("Using existing page: %s", page.url)
                 else:
                     page = await context.new_page()
-                
-                await page.goto("https://suno.com", wait_until="domcontentloaded")
+                    logger.debug("Created new page.")
+
+                # Navigate to Suno
+                logger.info("Navigating to suno.com...")
+                try:
+                    await page.goto(
+                        "https://suno.com",
+                        wait_until="domcontentloaded",
+                        timeout=30000,
+                    )
+                    logger.info("Page loaded: %s", page.url)
+                except Exception as nav_err:
+                    logger.warning("First navigation attempt failed: %s", nav_err)
+                    # Try creating a brand new page
+                    page = await context.new_page()
+                    await page.goto(
+                        "https://suno.com",
+                        wait_until="domcontentloaded",
+                        timeout=30000,
+                    )
+                    logger.info("Page loaded on retry: %s", page.url)
+
                 logger.info("Please log in manually in the opened browser window.")
 
                 cookie_value = await self._wait_for_authenticated_cookie(context)
