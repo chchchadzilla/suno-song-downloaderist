@@ -105,8 +105,13 @@ class BrowserAuthenticator:
                     )
                     context = await browser.new_context()
 
-                page = await context.new_page()
-                await page.goto("https://suno.com")
+                # For persistent context, use the page it already opened
+                if context.pages:
+                    page = context.pages[0]
+                else:
+                    page = await context.new_page()
+                
+                await page.goto("https://suno.com", wait_until="domcontentloaded")
                 logger.info("Please log in manually in the opened browser window.")
 
                 cookie_value = await self._wait_for_authenticated_cookie(context)
