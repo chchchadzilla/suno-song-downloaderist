@@ -142,23 +142,25 @@ class BrowserAuthenticator:
 
         Waits for the __session cookie (only set after actual Clerk login),
         then verifies the __client cookie against the Clerk API.
-
-        Args:
-            context: Playwright browser context.
-
-        Returns:
-            The __client cookie value for an authenticated session.
-
-        Raises:
-            TimeoutError: If no authenticated session detected within timeout.
         """
         start_time = time.time()
         deadline = start_time + (self.timeout_minutes * 60)
         check_count = 0
 
+        # URLs to check cookies for
+        cookie_urls = [
+            "https://suno.com",
+            "https://clerk.suno.com",
+        ]
+
         while time.time() < deadline:
-            cookies = await context.cookies()
+            cookies = await context.cookies(cookie_urls)
             cookie_map = {c["name"]: c["value"] for c in cookies}
+
+            if check_count == 0:
+                # Log what cookies we see on first check
+                cookie_names = list(cookie_map.keys())
+                logger.debug("Cookies found: %s", cookie_names)
 
             # __session = Clerk auth completed
             has_session = bool(cookie_map.get("__session"))
@@ -167,8 +169,11 @@ class BrowserAuthenticator:
             client_uat = cookie_map.get("__client_uat", "0")
             has_uat = client_uat and client_uat != "0"
 
-            if has_session or has_uat:
-                client_cookie = cookie_map.get("__client")
+            # Also just check if __client exists and is long (authenticated cookies are long)
+            client_cookie = cookie_map.get("__client", "")
+            has_long_client = len(client_cookie) > 100
+
+            if has_session or has_uat or has_long_client:
                 if client_cookie:
                     is_valid = await self._verify_cookie(client_cookie)
                     if is_valid:
@@ -180,7 +185,7 @@ class BrowserAuthenticator:
             check_count += 1
             if check_count % 5 == 0:
                 elapsed = int(time.time() - start_time)
-                logger.debug("Still waiting for login... (%ds elapsed)", elapsed)
+                logger.info("Waiting for login... (%ds elapsed)", elapsed)
 
             await asyncio.sleep(2)
 
