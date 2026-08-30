@@ -63,7 +63,10 @@ class BrowserAuthenticator:
         )
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
+            browser = await p.chromium.launch(
+                headless=False,
+                channel="chrome",  # Use real Chrome, not bundled Chromium (Google blocks automation browsers)
+            )
             context = await browser.new_context()
             page = await context.new_page()
 
