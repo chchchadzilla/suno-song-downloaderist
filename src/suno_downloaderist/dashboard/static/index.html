@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suno Song Downloaderist</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="app-header">
+        <h1>Suno Song Downloaderist</h1>
+    </header>
+
+    <main class="container">
+        <section class="card status-panel">
+            <div class="status-item">
+                <span class="status-indicator" id="auth-status-dot"></span>
+                <span id="auth-status-text">Checking Auth...</span>
+            </div>
+            <div class="status-item">
+                <span class="badge" id="subscription-badge">Loading...</span>
+            </div>
+            <div class="status-item">
+                <span id="total-songs-text">Library Size: --</span>
+            </div>
+        </section>
+
+        <section class="card filter-panel">
+            <h2>Filters & Options</h2>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Date Range (Since)</label>
+                    <input type="datetime-local" id="filter-since">
+                </div>
+                <div class="form-group">
+                    <label>Date Range (Until)</label>
+                    <input type="datetime-local" id="filter-until">
+                </div>
+                <div class="form-group">
+                    <label>Search Title</label>
+                    <input type="text" id="filter-search" placeholder="Song title...">
+                </div>
+                <div class="form-group">
+                    <label>Minimum Plays</label>
+                    <input type="number" id="filter-min-plays" min="0">
+                </div>
+                <div class="form-group checkbox-group">
+                    <label class="toggle">
+                        <input type="checkbox" id="filter-liked-only">
+                        <span class="slider"></span>
+                    </label>
+                    <span>Liked Only</span>
+                </div>
+                <div class="form-group full-width">
+                    <button class="btn btn-secondary" id="apply-filters-btn">Apply Filters</button>
+                    <span id="filtered-count" class="count-text"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="card format-panel">
+            <h2>Formats & Output</h2>
+            <div class="formats-grid">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="format-mp3" value="mp3" checked> MP3
+                </label>
+                <label class="checkbox-label" id="format-wav-label">
+                    <input type="checkbox" id="format-wav" value="wav"> WAV
+                    <span class="tooltip">Requires Pro/Premier subscription</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="format-mp4" value="mp4"> MP4 (Video)
+                </label>
+                <button class="btn btn-small" id="select-all-btn">Select All</button>
+            </div>
+            
+            <div class="output-dir-group">
+                <label>Output Directory</label>
+                <div class="input-with-icon">
+                    <span class="icon">📁</span>
+                    <input type="text" id="output-dir" placeholder="C:\Users\...\Music\SunoDownloaderist\">
+                </div>
+            </div>
+        </section>
+
+        <section class="action-panel">
+            <button class="btn btn-primary btn-large" id="download-btn">Download Selected Songs</button>
+        </section>
+
+        <section class="card progress-section hidden" id="progress-panel">
+            <h2>Download Progress</h2>
+            <div class="progress-stats">
+                <span id="progress-count">0 of 0 songs</span>
+                <span id="progress-percentage">0%</span>
+                <span id="progress-speed">0 KB/s</span>
+                <span id="progress-eta">ETA: --:--</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progress-bar-fill"></div>
+            </div>
+            <div class="current-file" id="current-file-text">Waiting to start...</div>
+            
+            <div class="download-controls">
+                <button class="btn btn-secondary" id="pause-resume-btn">Pause</button>
+                <button class="btn btn-danger" id="cancel-btn">Cancel</button>
+            </div>
+
+            <div class="log-area" id="log-area">
+                <!-- Log entries will go here -->
+            </div>
+        </section>
+
+        <section class="card results-section hidden" id="results-panel">
+            <h2>Download Complete</h2>
+            <div class="results-summary">
+                <div class="result-item success"><span id="result-downloaded">0</span> Downloaded</div>
+                <div class="result-item warning"><span id="result-skipped">0</span> Skipped</div>
+                <div class="result-item error"><span id="result-failed">0</span> Failed</div>
+            </div>
+            <div id="failed-list" class="failed-list hidden">
+                <h3>Failed Items</h3>
+                <ul id="failed-items-ul"></ul>
+            </div>
+            <a href="#" id="open-folder-link" class="btn btn-secondary">Open Output Folder</a>
+        </section>
+    </main>
+
+    <footer>
+        <p>Suno Song Downloaderist v0.1.0 — Open Source — MIT License</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
