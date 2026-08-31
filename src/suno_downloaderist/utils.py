@@ -8,10 +8,15 @@ import re
 import sys
 from pathlib import Path
 
-from rich.console import Console
-from rich.logging import RichHandler
-
-console = Console()
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    console = Console(legacy_windows=False)
+else:
+    console = Console()
 
 # Realistic Chrome user agent for HTTP requests
 _USER_AGENT = (
