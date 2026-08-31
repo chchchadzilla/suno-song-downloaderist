@@ -109,14 +109,52 @@ class SunoClient:
         url = get_billing_url()
         response = await self._request("GET", url)
         data = response.json()
-        return BillingInfo(**data)
+        logger.debug("Billing response keys: %s", list(data.keys()) if isinstance(data, dict) else type(data))
+        # Handle nested response formats
+        if isinstance(data, dict):
+            # Might be wrapped in a key
+            for key in ("billing_info", "info", "data", "response"):
+                if key in data and isinstance(data[key], dict):
+                    return BillingInfo(**data[key])
+            return BillingInfo(**data)
+        return BillingInfo()
 
     async def get_library(self, page: int, page_size: int = 20) -> List[SunoClip]:
         """Get a page of clips from the library."""
         url = get_feed_url(page=page, page_size=page_size)
         response = await self._request("GET", url)
         data = response.json()
-        return [SunoClip(**item) for item in data]
+        logger.debug(
+            "Feed response type: %s, keys: %s",
+            type(data).__name__,
+            list(data.keys()) if isinstance(data, dict) else f"list[{len(data)}]" if isinstance(data, list) else "?",
+        )
+
+        # Extract the clips list from whatever format Suno returns
+        clips_data: list = []
+        if isinstance(data, list):
+            clips_data = data
+        elif isinstance(data, dict):
+            # Try common wrapper keys
+            for key in ("clips", "data", "results", "items", "songs", "feed"):
+                if key in data and isinstance(data[key], list):
+                    clips_data = data[key]
+                    logger.debug("Found clips under key '%s' (%d items)", key, len(clips_data))
+                    break
+            else:
+                # Log the actual keys so we can see what Suno returns
+                logger.warning("Unexpected feed response format. Keys: %s", list(data.keys()))
+                # Maybe the whole dict is a single clip?
+                if "id" in data:
+                    clips_data = [data]
+
+        parsed = []
+        for item in clips_data:
+            try:
+                parsed.append(SunoClip(**item))
+            except Exception as exc:
+                logger.debug("Failed to parse clip: %s — %s", exc, list(item.keys()) if isinstance(item, dict) else item)
+        return parsed
 
     async def get_all_clips(
         self, 
