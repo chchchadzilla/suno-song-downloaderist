@@ -189,10 +189,20 @@ class SunoClient:
             except Exception as e:
                 logger.debug("Failed reading library cache: %s", e)
 
+        def _save_cache():
+            try:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                tmp_file = cache_file.with_suffix(".tmp")
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    json.dump(list(cached_clips_map.values()), f, default=str)
+                tmp_file.replace(cache_file)
+            except Exception as e:
+                logger.debug("Failed to save library cache: %s", e)
+
         page = 0
         page_size = 20
         new_clips: List[SunoClip] = []
-        
+
         while True:
             logger.info(f"Scanning library page {page}...")
             clips = await self.get_library(page=page, page_size=page_size)
@@ -203,11 +213,16 @@ class SunoClient:
             for c in clips:
                 if c.id in cached_clips_map:
                     known_in_page += 1
+                cached_clips_map[c.id] = c.model_dump()
                     
             new_clips.extend(clips)
             if progress_callback:
                 progress_callback(len(new_clips))
                 
+            # Periodically persist cache every 10 pages
+            if page % 10 == 0:
+                _save_cache()
+
             if len(clips) < page_size:
                 break
                 
@@ -219,17 +234,8 @@ class SunoClient:
                 
             page += 1
 
-        # Merge newly fetched clips into cached map
-        for c in new_clips:
-            cached_clips_map[c.id] = c.model_dump()
-            
-        # Save updated cache back to disk
-        try:
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(list(cached_clips_map.values()), f, default=str)
-        except Exception as e:
-            logger.debug("Failed to save library cache: %s", e)
+        # Final cache write
+        _save_cache()
 
         # Parse all clips
         all_clips: List[SunoClip] = []
