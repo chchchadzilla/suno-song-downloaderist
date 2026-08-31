@@ -552,10 +552,12 @@ def download(
                                 version_number=version_num,
                             )
 
-                            # Download audio (MP3)
-                            if config.download_mp3 and clip.audio_url:
+                            # Download audio (MP3) — use CDN URL, not the API's audio_url (which returns 'forbidden')
+                            if config.download_mp3:
+                                from suno_downloaderist.api.endpoints import get_cdn_mp3_url
+                                mp3_url = get_cdn_mp3_url(clip.id)
                                 result = await engine.download_file(
-                                    url=clip.audio_url,
+                                    url=mp3_url,
                                     dest_path=paths["mp3"],
                                 )
                                 if not result.success and result.error_message != "skipped":
@@ -566,10 +568,12 @@ def download(
                                 elif result.error_message == "skipped":
                                     skipped += 1
 
-                            # Download video (MP4)
-                            if config.download_mp4 and clip.video_url:
+                            # Download video (MP4) — same, use CDN
+                            if config.download_mp4:
+                                from suno_downloaderist.api.endpoints import get_cdn_mp4_url
+                                mp4_url = get_cdn_mp4_url(clip.id)
                                 await engine.download_file(
-                                    url=clip.video_url,
+                                    url=mp4_url,
                                     dest_path=paths["mp4"],
                                 )
 
@@ -586,9 +590,11 @@ def download(
                                     )
 
                             # Download cover art
-                            if config.include_cover_art and clip.image_large_url:
+                            if config.include_cover_art:
+                                from suno_downloaderist.api.endpoints import get_cdn_image_large_url
+                                cover_url = get_cdn_image_large_url(clip.id)
                                 await engine.download_file(
-                                    url=clip.image_large_url,
+                                    url=cover_url,
                                     dest_path=paths["cover"],
                                 )
 
