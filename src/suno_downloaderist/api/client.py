@@ -109,14 +109,13 @@ class SunoClient:
         url = get_billing_url()
         response = await self._request("GET", url)
         data = response.json()
-        logger.debug("Billing response keys: %s", list(data.keys()) if isinstance(data, dict) else type(data))
-        # Handle nested response formats
         if isinstance(data, dict):
-            # Might be wrapped in a key
-            for key in ("billing_info", "info", "data", "response"):
-                if key in data and isinstance(data[key], dict):
-                    return BillingInfo(**data[key])
-            return BillingInfo(**data)
+            return BillingInfo(
+                tier=data.get("subscription_type") or data.get("plan") or data.get("tier"),
+                credits_remaining=data.get("total_credits_left") or data.get("credits_remaining", 0),
+                total_credits=data.get("monthly_limit") or data.get("total_credits", 0),
+                is_active=data.get("is_active", False),
+            )
         return BillingInfo()
 
     async def get_library(self, page: int, page_size: int = 20) -> List[SunoClip]:
@@ -149,8 +148,11 @@ class SunoClient:
                     clips_data = [data]
 
         parsed = []
-        for item in clips_data:
+        for i, item in enumerate(clips_data):
             try:
+                if i == 0:
+                    logger.debug("First clip keys: %s", list(item.keys()) if isinstance(item, dict) else "?")
+                    logger.debug("First clip is_liked=%s, title=%s", item.get("is_liked"), item.get("title"))
                 parsed.append(SunoClip(**item))
             except Exception as exc:
                 logger.debug("Failed to parse clip: %s — %s", exc, list(item.keys()) if isinstance(item, dict) else item)
