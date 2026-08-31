@@ -338,7 +338,7 @@ def logout() -> None:
     default=None,
     help="Download format(s). Can be specified multiple times. Default: mp3.",
 )
-@click.option("--workers", "-w", type=int, default=None, help="Number of parallel workers (1-8).")
+@click.option("--workers", "-w", type=int, default=None, help="Number of parallel workers (1-16).")
 @click.option("--skip-existing/--no-skip", default=None, help="Skip already-downloaded files.")
 @click.option("--liked-only", is_flag=True, default=False, help="Only download liked/thumbs-up songs.")
 @click.option("--since", type=DATETIME_TYPE, default=None, help="Download songs created after this date (YYYY-MM-DD or 'YYYY-MM-DD HH:MM').")
@@ -346,6 +346,7 @@ def logout() -> None:
 @click.option("--search", type=str, default=None, help="Filter by title (substring match).")
 @click.option("--min-plays", type=int, default=None, help="Only download songs with at least this many plays.")
 @click.option("--include-video/--no-video", default=None, help="Include MP4 video downloads.")
+@click.option("--rescan", is_flag=True, default=False, help="Force a full library rescan instead of using cached index.")
 @click.option("--dry-run", is_flag=True, default=False, help="Show what would be downloaded without downloading.")
 @click.option("--yes", "-y", is_flag=True, default=False, help="Skip confirmation prompt.")
 @click.pass_context
@@ -361,6 +362,7 @@ def download(
     search: str | None,
     min_plays: int | None,
     include_video: bool | None,
+    rescan: bool,
     dry_run: bool,
     yes: bool,
 ) -> None:
@@ -379,9 +381,9 @@ def download(
 
         suno-dl download --liked-only             # Only liked songs
 
-        suno-dl download --since "2026-08-01"     # Songs from August 2026
+        suno-dl download -w 8                     # Fast download with 8 parallel workers
 
-        suno-dl download --since "2026-08-15 14:30"  # With hour/minute precision
+        suno-dl download --since "2026-08-01"     # Songs from August 2026
 
         suno-dl download -o ~/Desktop/MySunoSongs # Custom output folder
     """
@@ -391,7 +393,7 @@ def download(
     if output is not None:
         config.output_dir = output.expanduser()
     if workers is not None:
-        config.workers = max(1, min(8, workers))
+        config.workers = max(1, min(16, workers))
     if skip_existing is not None:
         config.skip_existing = skip_existing
     if include_video is not None:
@@ -448,10 +450,10 @@ def download(
                 title_search=search or "",
             )
 
-            # Fetch library with filters
+            # Fetch library with filters & smart cache
             console.print("\n[dim]Scanning your Suno library...[/dim]")
-            with console.status("[bold purple]Fetching songs..."):
-                clips = await client.get_all_clips(filter_options=filters)
+            with console.status("[bold purple]Syncing library songs..."):
+                clips = await client.get_all_clips(filter_options=filters, refresh_cache=rescan)
 
             if not clips:
                 console.print("[yellow]No songs found matching your filters.[/yellow]")
@@ -512,6 +514,7 @@ def download(
             from suno_downloaderist.downloader.metadata import MetadataWriter
             from suno_downloaderist.downloader.lyrics import LyricsWriter
             from suno_downloaderist.downloader.id3 import ID3Tagger
+            from suno_downloaderist.downloader.audio import convert_wav_to_mp3
 
             organizer = FileOrganizer()
             metadata_writer = MetadataWriter()
@@ -538,7 +541,7 @@ def download(
                 console=console,
             ) as progress:
                 task = progress.add_task(
-                    "[purple]Downloading...",
+                    f"[purple]Downloading ({config.workers} workers)...",
                     total=total_clips,
                 )
 
@@ -546,21 +549,33 @@ def download(
                 skipped = 0
                 failed = 0
                 failures: list[tuple[str, str]] = []
+                lock = asyncio.Lock()
+                sem = asyncio.Semaphore(config.workers)
 
-                for group_name, song_group in groups.items():
-                    for version_idx, clip in enumerate(song_group.clips):
-                        version_num = version_idx + 1 if len(song_group.clips) > 1 else None
-
+                async def _download_track(clip: Any, version_num: Optional[int]):
+                    nonlocal downloaded, skipped, failed
+                    async with sem:
                         try:
-                            # Create folder structure
+                            # 1. Organize paths
                             paths = organizer.organize_clip(
                                 clip=clip,
                                 base_dir=config.output_dir,
                                 version_number=version_num,
                             )
 
-                            # Download cover art first (needed for ID3 tagging)
-                            if config.include_cover_art:
+                            # 2. Check if already downloaded
+                            need_mp3 = config.download_mp3 and (not paths["mp3"].exists() or not config.skip_existing)
+                            need_wav = config.download_wav and (not paths["wav"].exists() or not config.skip_existing)
+                            need_mp4 = config.download_mp4 and clip.video_url and (not paths["mp4"].exists() or not config.skip_existing)
+
+                            if not need_mp3 and not need_wav and not need_mp4:
+                                async with lock:
+                                    skipped += 1
+                                    progress.update(task, advance=1)
+                                return
+
+                            # 3. Download cover art first (needed for ID3 tagging)
+                            if config.include_cover_art and (not paths["cover"].exists() or not config.skip_existing):
                                 from suno_downloaderist.api.endpoints import get_cdn_image_large_url
                                 cover_url = clip.image_large_url or clip.image_url or get_cdn_image_large_url(clip.id)
                                 if cover_url:
@@ -569,21 +584,15 @@ def download(
                                         dest_path=paths["cover"],
                                     )
 
-                            # Handle Audio (WAV and/or MP3 via master audio stream)
-                            need_mp3 = config.download_mp3 and (not paths["mp3"].exists() or not config.skip_existing)
-                            need_wav = config.download_wav and (not paths["wav"].exists() or not config.skip_existing)
-
-                            if (config.download_mp3 and paths["mp3"].exists() and config.skip_existing and not config.download_wav) or \
-                               (config.download_wav and paths["wav"].exists() and config.skip_existing and not config.download_mp3) or \
-                               (config.download_mp3 and config.download_wav and paths["mp3"].exists() and paths["wav"].exists() and config.skip_existing):
-                                skipped += 1
-                            elif need_mp3 or need_wav:
+                            # 4. Handle Audio (WAV and/or MP3 via master audio stream)
+                            if need_mp3 or need_wav:
                                 wav_url = await client.get_wav_download_url(clip.id)
                                 if not wav_url:
-                                    failures.append((clip.title, "Could not acquire WAV audio URL from Suno"))
-                                    failed += 1
-                                    progress.update(task, advance=1)
-                                    continue
+                                    async with lock:
+                                        failures.append((clip.title, "Could not acquire WAV audio URL from Suno"))
+                                        failed += 1
+                                        progress.update(task, advance=1)
+                                    return
 
                                 wav_dest = paths["wav"] if config.download_wav else (paths["folder"] / f".temp_{clip.id}.wav")
                                 wav_res = await engine.download_file(
@@ -592,20 +601,21 @@ def download(
                                 )
 
                                 if not wav_res.success:
-                                    failures.append((clip.title, wav_res.error_message or "WAV download failed"))
-                                    failed += 1
-                                    progress.update(task, advance=1)
-                                    continue
+                                    async with lock:
+                                        failures.append((clip.title, wav_res.error_message or "WAV download failed"))
+                                        failed += 1
+                                        progress.update(task, advance=1)
+                                    return
 
                                 # Convert to 320kbps MP3 if requested
                                 if config.download_mp3:
-                                    from suno_downloaderist.downloader.audio import convert_wav_to_mp3
                                     mp3_ok = convert_wav_to_mp3(wav_dest, paths["mp3"], bitrate_kbps=320)
                                     if not mp3_ok:
-                                        failures.append((clip.title, "Failed to encode MP3 from master WAV"))
-                                        failed += 1
-                                        progress.update(task, advance=1)
-                                        continue
+                                        async with lock:
+                                            failures.append((clip.title, "Failed to encode MP3 from master WAV"))
+                                            failed += 1
+                                            progress.update(task, advance=1)
+                                        return
 
                                     # Embed ID3 tags & cover art
                                     if config.embed_id3_tags and paths["mp3"].exists():
@@ -623,19 +633,19 @@ def download(
                                     except Exception:
                                         pass
 
-                            # Download video (MP4) if available
-                            if config.download_mp4 and clip.video_url:
+                            # 5. Download video (MP4) if available
+                            if need_mp4:
                                 await engine.download_file(
                                     url=clip.video_url,
                                     dest_path=paths["mp4"],
                                 )
 
-                            # Write metadata
+                            # 6. Write metadata
                             metadata_writer.write_metadata_txt(clip, paths["txt"])
                             if config.include_json:
                                 metadata_writer.write_metadata_json(clip, paths["json"])
 
-                            # Fetch and write synced lyrics
+                            # 7. Fetch and write synced lyrics
                             if config.include_synced_lyrics:
                                 try:
                                     aligned = await client.get_aligned_lyrics(clip.id)
@@ -649,14 +659,25 @@ def download(
                                 except Exception:
                                     logger.debug("Could not fetch synced lyrics for %s", clip.id)
 
-                            downloaded += 1
+                            async with lock:
+                                downloaded += 1
+                                progress.update(task, advance=1)
 
                         except Exception as exc:
-                            failed += 1
-                            failures.append((clip.title, str(exc)))
+                            async with lock:
+                                failed += 1
+                                failures.append((clip.title, str(exc)))
+                                progress.update(task, advance=1)
                             logger.debug("Failed to download %s: %s", clip.title, exc)
 
-                        progress.update(task, advance=1)
+                # Launch parallel worker tasks
+                track_tasks = []
+                for group_name, song_group in groups.items():
+                    for version_idx, clip in enumerate(song_group.clips):
+                        v_num = version_idx + 1 if len(song_group.clips) > 1 else None
+                        track_tasks.append(_download_track(clip, v_num))
+
+                await asyncio.gather(*track_tasks)
 
             # Final report
             console.print()

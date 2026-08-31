@@ -168,27 +168,79 @@ class SunoClient:
     async def get_all_clips(
         self, 
         filter_options: Optional[FilterOptions] = None,
-        progress_callback: Optional[Callable[[int], None]] = None
+        progress_callback: Optional[Callable[[int], None]] = None,
+        refresh_cache: bool = False,
     ) -> List[SunoClip]:
-        """Fetch all clips, paginating through the entire library."""
+        """Fetch all clips, with smart incremental caching for lightning-fast subsequent runs."""
+        from suno_downloaderist.utils import get_config_dir
+        cache_file = get_config_dir() / "library_cache.json"
+        
+        cached_clips_map: Dict[str, dict] = {}
+        if not refresh_cache and cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                    if isinstance(cached_data, list):
+                        for item in cached_data:
+                            if isinstance(item, dict) and "id" in item:
+                                cached_clips_map[item["id"]] = item
+                if cached_clips_map:
+                    logger.info(f"Loaded {len(cached_clips_map)} cached songs from local library index.")
+            except Exception as e:
+                logger.debug("Failed reading library cache: %s", e)
+
         page = 0
         page_size = 20
-        all_clips: List[SunoClip] = []
+        new_clips: List[SunoClip] = []
         
         while True:
-            logger.info(f"Fetching library page {page}...")
+            logger.info(f"Scanning library page {page}...")
             clips = await self.get_library(page=page, page_size=page_size)
             if not clips:
                 break
                 
-            all_clips.extend(clips)
+            known_in_page = 0
+            for c in clips:
+                if c.id in cached_clips_map:
+                    known_in_page += 1
+                    
+            new_clips.extend(clips)
             if progress_callback:
-                progress_callback(len(all_clips))
+                progress_callback(len(new_clips))
                 
             if len(clips) < page_size:
                 break
                 
+            # If all items on this page are already in cache and not doing a full refresh,
+            # we've caught up with the user's latest library!
+            if not refresh_cache and cached_clips_map and known_in_page == len(clips):
+                logger.info(f"Sync complete. Caught up with indexed library at page {page}.")
+                break
+                
             page += 1
+
+        # Merge newly fetched clips into cached map
+        for c in new_clips:
+            cached_clips_map[c.id] = c.model_dump()
+            
+        # Save updated cache back to disk
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(list(cached_clips_map.values()), f, default=str)
+        except Exception as e:
+            logger.debug("Failed to save library cache: %s", e)
+
+        # Parse all clips
+        all_clips: List[SunoClip] = []
+        for item in cached_clips_map.values():
+            try:
+                all_clips.append(SunoClip(**item))
+            except Exception:
+                pass
+
+        # Sort newest first
+        all_clips.sort(key=lambda c: c.created_at, reverse=True)
 
         # Apply filters
         if filter_options:

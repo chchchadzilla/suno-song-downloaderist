@@ -39,10 +39,10 @@ class AppConfig(BaseModel):
     include_json: bool = Field(default=True, description="Save raw API response as .json alongside .txt.")
 
     # Performance settings
-    workers: int = Field(default=3, ge=1, le=8, description="Number of parallel download workers.")
+    workers: int = Field(default=5, ge=1, le=16, description="Number of parallel download workers.")
     skip_existing: bool = Field(default=True, description="Skip files that have already been downloaded.")
-    api_delay: float = Field(default=1.5, ge=0.5, le=10.0, description="Delay between API requests (seconds).")
-    cdn_delay: float = Field(default=0.3, ge=0.1, le=5.0, description="Delay between CDN downloads (seconds).")
+    api_delay: float = Field(default=0.2, ge=0.0, le=10.0, description="Delay between API requests (seconds).")
+    cdn_delay: float = Field(default=0.1, ge=0.0, le=5.0, description="Delay between CDN downloads (seconds).")
     max_retries: int = Field(default=5, ge=1, le=20, description="Maximum retries on failed requests.")
 
     # Dashboard settings
