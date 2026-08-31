@@ -552,50 +552,75 @@ def download(
                                 version_number=version_num,
                             )
 
-                            # Download audio (MP3) — use CDN URL, not the API's audio_url (which returns 'forbidden')
-                            if config.download_mp3:
-                                from suno_downloaderist.api.endpoints import get_cdn_mp3_url
-                                mp3_url = get_cdn_mp3_url(clip.id)
-                                result = await engine.download_file(
-                                    url=mp3_url,
-                                    dest_path=paths["mp3"],
-                                )
-                                if not result.success and result.error_message != "skipped":
-                                    failures.append((clip.title, result.error_message or "Unknown error"))
+                            # Download cover art first (needed for ID3 tagging)
+                            if config.include_cover_art:
+                                from suno_downloaderist.api.endpoints import get_cdn_image_large_url
+                                cover_url = clip.image_large_url or clip.image_url or get_cdn_image_large_url(clip.id)
+                                if cover_url:
+                                    await engine.download_file(
+                                        url=cover_url,
+                                        dest_path=paths["cover"],
+                                    )
+
+                            # Handle Audio (WAV and/or MP3 via master audio stream)
+                            need_mp3 = config.download_mp3 and (not paths["mp3"].exists() or not config.skip_existing)
+                            need_wav = config.download_wav and (not paths["wav"].exists() or not config.skip_existing)
+
+                            if (config.download_mp3 and paths["mp3"].exists() and config.skip_existing and not config.download_wav) or \
+                               (config.download_wav and paths["wav"].exists() and config.skip_existing and not config.download_mp3) or \
+                               (config.download_mp3 and config.download_wav and paths["mp3"].exists() and paths["wav"].exists() and config.skip_existing):
+                                skipped += 1
+                            elif need_mp3 or need_wav:
+                                wav_url = await client.get_wav_download_url(clip.id)
+                                if not wav_url:
+                                    failures.append((clip.title, "Could not acquire WAV audio URL from Suno"))
                                     failed += 1
                                     progress.update(task, advance=1)
                                     continue
-                                elif result.error_message == "skipped":
-                                    skipped += 1
 
-                            # Download video (MP4) — same, use CDN
-                            if config.download_mp4:
-                                from suno_downloaderist.api.endpoints import get_cdn_mp4_url
-                                mp4_url = get_cdn_mp4_url(clip.id)
-                                await engine.download_file(
-                                    url=mp4_url,
-                                    dest_path=paths["mp4"],
+                                wav_dest = paths["wav"] if config.download_wav else (paths["folder"] / f".temp_{clip.id}.wav")
+                                wav_res = await engine.download_file(
+                                    url=wav_url,
+                                    dest_path=wav_dest,
                                 )
 
-                            # Download WAV (authenticated)
-                            if config.download_wav:
-                                wav_url = await client.get_wav_download_url(clip.id)
-                                if wav_url:
-                                    await engine.download_file(
-                                        url=wav_url,
-                                        dest_path=paths["wav"],
-                                        auth_headers={
-                                            "Authorization": f"Bearer {token_manager.get_current_token()}"
-                                        },
-                                    )
+                                if not wav_res.success:
+                                    failures.append((clip.title, wav_res.error_message or "WAV download failed"))
+                                    failed += 1
+                                    progress.update(task, advance=1)
+                                    continue
 
-                            # Download cover art
-                            if config.include_cover_art:
-                                from suno_downloaderist.api.endpoints import get_cdn_image_large_url
-                                cover_url = get_cdn_image_large_url(clip.id)
+                                # Convert to 320kbps MP3 if requested
+                                if config.download_mp3:
+                                    from suno_downloaderist.downloader.audio import convert_wav_to_mp3
+                                    mp3_ok = convert_wav_to_mp3(wav_dest, paths["mp3"], bitrate_kbps=320)
+                                    if not mp3_ok:
+                                        failures.append((clip.title, "Failed to encode MP3 from master WAV"))
+                                        failed += 1
+                                        progress.update(task, advance=1)
+                                        continue
+
+                                    # Embed ID3 tags & cover art
+                                    if config.embed_id3_tags and paths["mp3"].exists():
+                                        cover_path = paths["cover"] if paths["cover"].exists() else None
+                                        id3_tagger.tag_mp3(
+                                            file_path=paths["mp3"],
+                                            clip=clip,
+                                            cover_art_path=cover_path,
+                                        )
+
+                                # Cleanup temporary WAV if user only asked for MP3
+                                if not config.download_wav and wav_dest.exists():
+                                    try:
+                                        wav_dest.unlink(missing_ok=True)
+                                    except Exception:
+                                        pass
+
+                            # Download video (MP4) if available
+                            if config.download_mp4 and clip.video_url:
                                 await engine.download_file(
-                                    url=cover_url,
-                                    dest_path=paths["cover"],
+                                    url=clip.video_url,
+                                    dest_path=paths["mp4"],
                                 )
 
                             # Write metadata
@@ -616,15 +641,6 @@ def download(
                                         )
                                 except Exception:
                                     logger.debug("Could not fetch synced lyrics for %s", clip.id)
-
-                            # Embed ID3 tags
-                            if config.embed_id3_tags and config.download_mp3 and paths["mp3"].exists():
-                                cover_path = paths["cover"] if paths["cover"].exists() else None
-                                id3_tagger.tag_mp3(
-                                    file_path=paths["mp3"],
-                                    clip=clip,
-                                    cover_art_path=cover_path,
-                                )
 
                             downloaded += 1
 

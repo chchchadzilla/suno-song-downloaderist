@@ -33,18 +33,36 @@ class ID3Tagger:
             tags = audio.tags
             assert tags is not None
             
-            title = clip.get('title', 'Unknown')
-            artist = clip.get('display_name', 'Suno AI')
-            created_at = clip.get('created_at', '')
-            year = created_at[:4] if created_at else ''
+            if hasattr(clip, "model_dump"):
+                clip_dict = clip.model_dump()
+            elif isinstance(clip, dict):
+                clip_dict = clip
+            else:
+                clip_dict = dict(clip)
+
+            title = clip_dict.get('title') or 'Unknown'
+            artist = clip_dict.get('display_name') or 'Suno AI'
             
-            metadata = clip.get('metadata', {})
-            genre = metadata.get('tags', '')
-            lyrics = metadata.get('lyrics', metadata.get('prompt', ''))
+            created_at = clip_dict.get('created_at', '')
+            if hasattr(created_at, 'year'):
+                year = str(created_at.year)
+            elif isinstance(created_at, str) and len(created_at) >= 4:
+                year = created_at[:4]
+            else:
+                year = ''
+            
+            metadata = clip_dict.get('metadata') or {}
+            if hasattr(metadata, 'model_dump'):
+                metadata = metadata.model_dump()
+            elif not isinstance(metadata, dict):
+                metadata = {}
+
+            genre = metadata.get('tags') or ''
+            lyrics = metadata.get('lyrics') or metadata.get('prompt') or ''
                 
-            clip_id = clip.get('id', '')
-            model = clip.get('model_name', '')
-            duration_ms = int(metadata.get('duration', 0) * 1000)
+            clip_id = clip_dict.get('id') or ''
+            model = clip_dict.get('model_name') or ''
+            duration_ms = int(float(metadata.get('duration') or clip_dict.get('duration') or 0) * 1000)
 
             tags.add(TIT2(encoding=3, text=[title]))
             tags.add(TPE1(encoding=3, text=[artist]))

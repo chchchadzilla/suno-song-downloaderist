@@ -172,7 +172,7 @@ class SunoClient:
     ) -> List[SunoClip]:
         """Fetch all clips, paginating through the entire library."""
         page = 0
-        page_size = 50
+        page_size = 20
         all_clips: List[SunoClip] = []
         
         while True:
@@ -242,16 +242,46 @@ class SunoClient:
             raise
 
     async def get_wav_download_url(self, clip_id: str) -> Optional[str]:
-        """Get the WAV file download URL for a clip."""
-        url = get_wav_url(clip_id)
+        """Get the WAV file download URL for a clip.
+        
+        Checks if WAV is already ready, or triggers conversion and polls
+        until the signed S3 URL is ready.
+        """
+        wav_url_endpoint = get_wav_url(clip_id)
         try:
-            response = await self._request("GET", url)
+            response = await self._request("GET", wav_url_endpoint)
             data = response.json()
-            return data.get("url")
+            if data and data.get("wav_file_url"):
+                return data["wav_file_url"]
+            if data and data.get("url"):
+                return data["url"]
         except HTTPStatusError as e:
-            if e.response.status_code in (403, 404):
+            if e.response.status_code == 403:
                 return None
-            raise
+            if e.response.status_code != 404:
+                raise
+
+        # Trigger conversion if not ready
+        convert_url = f"https://studio-api.prod.suno.com/api/gen/{clip_id}/convert_wav/"
+        try:
+            await self._request("POST", convert_url)
+        except Exception as exc:
+            logger.debug("Failed to trigger WAV conversion for %s: %s", clip_id, exc)
+
+        # Poll for readiness (up to 15s)
+        for _ in range(8):
+            await asyncio.sleep(1.5)
+            try:
+                response = await self._request("GET", wav_url_endpoint)
+                data = response.json()
+                if data and data.get("wav_file_url"):
+                    return data["wav_file_url"]
+                if data and data.get("url"):
+                    return data["url"]
+            except Exception:
+                pass
+
+        return None
             
     def group_by_title(self, clips: List[SunoClip]) -> Dict[str, SongGroup]:
         """Group a list of clips by their title."""
