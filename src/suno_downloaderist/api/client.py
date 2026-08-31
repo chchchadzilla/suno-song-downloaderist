@@ -38,7 +38,7 @@ class SunoClient:
             headers=self.headers,
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
         )
-        self.base_delay = 1.5
+        self.base_delay = 0.2
         self.current_delay = self.base_delay
 
     async def _get_auth_headers(self) -> Dict[str, str]:
