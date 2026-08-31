@@ -110,10 +110,17 @@ class SunoClient:
         response = await self._request("GET", url)
         data = response.json()
         if isinstance(data, dict):
+            # Find tier - only accept actual string values
+            tier = None
+            for key in ("subscription_type", "plan", "tier"):
+                val = data.get(key)
+                if isinstance(val, str) and val:
+                    tier = val
+                    break
             return BillingInfo(
-                tier=data.get("subscription_type") or data.get("plan") or data.get("tier"),
-                credits_remaining=data.get("total_credits_left") or data.get("credits_remaining", 0),
-                total_credits=data.get("monthly_limit") or data.get("total_credits", 0),
+                tier=tier or "unknown",
+                credits_remaining=data.get("total_credits_left") or data.get("credits_remaining") or 0,
+                total_credits=data.get("monthly_limit") or data.get("total_credits") or 0,
                 is_active=data.get("is_active", False),
             )
         return BillingInfo()
