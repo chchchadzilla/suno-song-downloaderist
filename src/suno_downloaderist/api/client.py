@@ -190,14 +190,14 @@ class SunoClient:
                 logger.debug("Failed reading library cache: %s", e)
 
         def _save_cache():
+            if not cached_clips_map:
+                return
             try:
                 cache_file.parent.mkdir(parents=True, exist_ok=True)
-                tmp_file = cache_file.with_suffix(".tmp")
-                with open(tmp_file, "w", encoding="utf-8") as f:
+                with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(list(cached_clips_map.values()), f, default=str)
-                tmp_file.replace(cache_file)
             except Exception as e:
-                logger.debug("Failed to save library cache: %s", e)
+                logger.warning("Failed to save library cache: %s", e)
 
         page = 0
         page_size = 20
