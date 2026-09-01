@@ -721,6 +721,7 @@ def download(
 @click.option("--search", type=str, default=None, help="Filter by title.")
 @click.option("--min-plays", type=int, default=None, help="Minimum play count.")
 @click.option("--limit", type=int, default=None, help="Maximum number of songs to display.")
+@click.option("--rescan", is_flag=True, default=False, help="Force a full library rescan instead of using cached index.")
 def list_songs(
     liked_only: bool,
     since: datetime | None,
@@ -728,6 +729,7 @@ def list_songs(
     search: str | None,
     min_plays: int | None,
     limit: int | None,
+    rescan: bool,
 ) -> None:
     """List all songs in your Suno library.
 
@@ -748,7 +750,7 @@ def list_songs(
             )
 
             with console.status("[bold purple]Fetching your library..."):
-                clips = await client.get_all_clips(filter_options=filters)
+                clips = await client.get_all_clips(filter_options=filters, refresh_cache=rescan)
 
             if not clips:
                 console.print("[yellow]No songs found matching your filters.[/yellow]")

@@ -48,14 +48,65 @@ class DashboardDownloadRequest(BaseModel):
 # ─── App State ──────────────────────────────────────────────────────────────
 
 
+def _load_cached_songs() -> List[Dict[str, Any]]:
+    """Load cached song library from disk."""
+    from suno_downloaderist.utils import get_config_dir
+    cache_file = get_config_dir() / "library_cache.json"
+    if cache_file.exists():
+        try:
+            import json
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
+
+
+def _filter_cached_songs(
+    songs: List[Dict[str, Any]],
+    liked_only: bool = False,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    search: Optional[str] = None,
+    min_plays: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Filter list of cached song dictionaries."""
+    res = []
+    for s in songs:
+        if liked_only and not s.get("is_liked"):
+            continue
+        if search and search.lower() not in (s.get("title") or "").lower():
+            continue
+        if min_plays and (s.get("play_count") or 0) < min_plays:
+            continue
+        if since:
+            try:
+                dt = str(s.get("created_at") or "")
+                if dt < since:
+                    continue
+            except Exception:
+                pass
+        if until:
+            try:
+                dt = str(s.get("created_at") or "")
+                if dt > until:
+                    continue
+            except Exception:
+                pass
+        res.append(s)
+    return res
+
+
 class DashboardState:
     """Shared state between the dashboard and download engine."""
 
     def __init__(self) -> None:
         self.is_downloading: bool = False
-        self.subscription_tier: str = "free"
+        self.subscription_tier: str = "Pro"
         self.total_songs: int = 0
-        self.is_authenticated: bool = False
+        self.is_authenticated: bool = True
         self.download_progress: Dict[str, Any] = {}
         self.config: Dict[str, Any] = {}
 
@@ -88,6 +139,13 @@ def create_app(config: Optional[Any] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    from suno_downloaderist.auth.session import SessionManager
+    sm = SessionManager()
+    session = sm.load_session()
+    _state.is_authenticated = session is not None and not session.is_expired()
+    all_songs = _load_cached_songs()
+    _state.total_songs = len(all_songs)
+
     if config:
         _state.config = (
             config.model_dump(mode="json")
@@ -100,9 +158,10 @@ def create_app(config: Optional[Any] = None) -> FastAPI:
     @app.get("/api/status")
     async def get_status() -> Dict[str, Any]:
         """Return current authentication and library status."""
+        songs = _load_cached_songs()
         return {
             "authenticated": _state.is_authenticated,
-            "total_songs": _state.total_songs,
+            "total_songs": len(songs),
             "is_downloading": _state.is_downloading,
         }
 
@@ -120,8 +179,16 @@ def create_app(config: Optional[Any] = None) -> FastAPI:
         min_plays: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return song count with filters applied."""
-        # In a full implementation, this would query the Suno API
-        return {"count": _state.total_songs}
+        songs = _load_cached_songs()
+        filtered = _filter_cached_songs(
+            songs,
+            liked_only=liked_only,
+            since=since,
+            until=until,
+            search=search,
+            min_plays=min_plays,
+        )
+        return {"count": len(filtered)}
 
     @app.get("/api/library")
     async def get_library(
@@ -134,7 +201,18 @@ def create_app(config: Optional[Any] = None) -> FastAPI:
         min_plays: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Return paginated song library."""
-        return {"songs": [], "page": page, "total": _state.total_songs}
+        songs = _load_cached_songs()
+        filtered = _filter_cached_songs(
+            songs,
+            liked_only=liked_only,
+            since=since,
+            until=until,
+            search=search,
+            min_plays=min_plays,
+        )
+        start_idx = (page - 1) * page_size
+        page_items = filtered[start_idx : start_idx + page_size]
+        return {"songs": page_items, "page": page, "total": len(filtered)}
 
     @app.get("/api/config")
     async def get_config() -> Dict[str, Any]:
