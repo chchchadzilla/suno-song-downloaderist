@@ -141,8 +141,11 @@ def create_app(config: Optional[Any] = None) -> FastAPI:
 
     from suno_downloaderist.auth.session import SessionManager
     sm = SessionManager()
-    session = sm.load_session()
-    _state.is_authenticated = session is not None and not session.is_expired()
+    try:
+        session = sm.load_session()
+        _state.is_authenticated = session is not None
+    except Exception:
+        _state.is_authenticated = False
     all_songs = _load_cached_songs()
     _state.total_songs = len(all_songs)
 
